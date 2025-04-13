@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "sqlite": {
+      "command": "mcp-server-sqlite",
+      "args": [
+        "--db-path",
+        "./coffee_shop.db"
+      ]
+    }
+  }
+}
