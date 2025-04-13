@@ -13,8 +13,8 @@ A simple command-line client for interacting with an MCP SQLite server. This cli
 
 1. **Create a project directory**:
    ```bash
-   mkdir mcp-client
-   cd mcp-client
+   git clone https://github.com/calvinw/mcp-sqlite-client.git
+   cd mcp-sqlite-client
    ```
 
 2. **Create and activate a virtual environment**:
