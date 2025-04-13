@@ -273,7 +273,7 @@ class ChatSession:
             while True:
                 try:
                     # Get user input
-                    user_input = input("\nYou: ").strip()
+                    user_input = input(f"\nUSER:").strip()
                     if user_input.lower() in ["exit", "quit"]:
                         break
                         
@@ -318,7 +318,7 @@ class ChatSession:
                         messages.append({"role": "assistant", "content": content})
                     
                     # Print the response
-                    print(f"\nAssistant: {content}")
+                    print(f"\nAI: {content}")
                     
                 except KeyboardInterrupt:
                     print("\nExiting...")
