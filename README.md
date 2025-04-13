@@ -39,7 +39,7 @@ A simple command-line client for interacting with an MCP SQLite server. This cli
 
    ```bash
    # For Chinook database
-   curl -L https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite -o Chinook_Sqlite.sqlite
+   curl -L https://github.com/lerocha/chinook-database/raw/master/ChinookDatabase/DataSources/Chinook_Sqlite.sqlite -o chinook.db
    
    # For Northwind database
    git clone https://github.com/jpwhite3/northwind-SQLite3.git
@@ -59,7 +59,7 @@ A simple command-line client for interacting with an MCP SQLite server. This cli
          "command": "mcp-server-sqlite",
          "args": [
            "--db-path",
-           "./Chinook_Sqlite.sqlite"
+           "./chinook.db"
          ]
        }
      }
