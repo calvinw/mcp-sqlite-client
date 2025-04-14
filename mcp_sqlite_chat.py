@@ -203,7 +203,8 @@ class ChatSession:
         
         try:
             args = json.loads(args_str)
-            tool_call_desc = f"🛠️ *Using tool: {tool_name}*"
+            # Create a descriptive message about the tool being used
+            tool_call_desc = f"🛠️ *Using tool: {tool_name}* with parameters: {json.dumps(args, indent=2)}"
             with st.chat_message("assistant"):
                 st.write(tool_call_desc)
             
@@ -213,14 +214,12 @@ class ChatSession:
             result = await self.server.execute_tool(tool_name, args)
             result_str = str(result)
             
-            # Display tool result
-            with st.chat_message("system"):
-                st.text(f"Tool result:\n{result_str[:1000]}")
-                if len(result_str) > 1000:
-                    st.text("... (truncated)")
-            
-            # Add tool result to chat history (but don't show in UI to avoid clutter)
-            # Since we've already displayed it specially
+            # Only show tool results if debug mode is enabled
+            if st.session_state.get("debug_mode", False):
+                with st.chat_message("system"):
+                    st.text(f"Tool result:\n{result_str[:1000]}")
+                    if len(result_str) > 1000:
+                        st.text("... (truncated)")
             
             # Add the assistant's message with the tool call to actual message list for the API
             messages.append({
@@ -401,6 +400,15 @@ async def main():
             height=100
         )
         
+        # Debug mode toggle
+        if "debug_mode" not in st.session_state:
+            st.session_state.debug_mode = False
+        
+        debug_mode = st.checkbox("Debug Mode (Show Tool Results)", value=st.session_state.debug_mode)
+        if debug_mode != st.session_state.debug_mode:
+            st.session_state.debug_mode = debug_mode
+            st.rerun()
+        
         # Clear chat button
         if st.button("Clear Chat"):
             st.session_state.messages = []
@@ -413,6 +421,19 @@ async def main():
         
         This app allows you to have a conversation with an AI about your SQLite database.
         You can ask questions about the database schema, query data, and more.
+        
+        ### Example Queries:
+        - "What tables are in this database?"
+        - "Show me the schema of the Customers table"
+        - "How many albums are there in total?"
+        - "Show me the artists with the most albums"
+        - "List all employees hired before 2010"
+        
+        ### Tool Usage:
+        When the AI needs to access the database, you'll see a message showing which tool is being used.
+        The actual database results are processed behind the scenes to keep the interface clean.
+        
+        *Start chatting below!*
         """)
     
     # Initialize server and chat session
