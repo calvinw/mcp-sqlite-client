@@ -17,8 +17,18 @@ load_dotenv()
 st.set_page_config(
     page_title="MCP SQLite Chat", 
     page_icon="💬", 
-    layout="wide"
+    layout="wide",
+    initial_sidebar_state="collapsed"  # Make sidebar collapsible and initially collapsed
 )
+
+# List of specified models
+SPECIFIED_MODELS = [
+    "openai/gpt-4o-mini",
+    "openai/gpt-4o",
+    "google/gemini-2.0-flash-001",
+    "google/gemini-flash-1.5",
+    "anthropic/claude-3.5-haiku",
+]
 
 # Initialize session state for messages
 if "messages" not in st.session_state:
@@ -30,7 +40,8 @@ class Configuration:
     
     def __init__(self) -> None:
         """Initialize configuration with environment variables."""
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
+        # Try to get API key from session state (text input) or .env file
+        self.api_key = st.session_state.get("openrouter_api_key", "") or os.getenv("OPENROUTER_API_KEY")
         
     def load_config(self, file_path: str) -> dict:
         """Load server configuration from JSON file."""
@@ -41,7 +52,7 @@ class Configuration:
     def llm_api_key(self) -> str:
         """Get the LLM API key."""
         if not self.api_key:
-            raise ValueError("OPENROUTER_API_KEY not found in environment variables")
+            raise ValueError("OPENROUTER_API_KEY not found in environment variables or text input")
         return self.api_key
 
 
@@ -82,28 +93,30 @@ class Server:
         
     async def initialize(self) -> None:
         """Initialize the server connection."""
-        with st.spinner(f"Initializing server: {self.name}..."):
-            server_params = StdioServerParameters(
-                command=self.config["command"],
-                args=self.config["args"],
-                env={**os.environ, **self.config["env"]} if self.config.get("env") else None,
-            )
-            
-            try:
-                stdio_transport = await self.exit_stack.enter_async_context(
-                    stdio_client(server_params)
+        # Display initialization message in sidebar
+        with st.sidebar:
+            with st.spinner(f"Initializing server: {self.name}..."):
+                server_params = StdioServerParameters(
+                    command=self.config["command"],
+                    args=self.config["args"],
+                    env={**os.environ, **self.config["env"]} if self.config.get("env") else None,
                 )
-                read, write = stdio_transport
-                session = await self.exit_stack.enter_async_context(
-                    ClientSession(read, write)
-                )
-                await session.initialize()
-                self.session = session
-                st.success(f"Successfully initialized server: {self.name}")
-            except Exception as e:
-                st.error(f"Error initializing server {self.name}: {e}")
-                await self.cleanup()
-                raise
+                
+                try:
+                    stdio_transport = await self.exit_stack.enter_async_context(
+                        stdio_client(server_params)
+                    )
+                    read, write = stdio_transport
+                    session = await self.exit_stack.enter_async_context(
+                        ClientSession(read, write)
+                    )
+                    await session.initialize()
+                    self.session = session
+                    st.success(f"Successfully initialized server: {self.name}")
+                except Exception as e:
+                    st.error(f"Error initializing server {self.name}: {e}")
+                    await self.cleanup()
+                    raise
             
     async def list_tools(self) -> List[Tool]:
         """List available tools from the server."""
@@ -346,7 +359,7 @@ class ChatSession:
             return error_msg
 
 
-async def init_chat_session():
+async def init_chat_session(model_name):
     """Initialize the chat session and server."""
     try:
         # Load configuration
@@ -368,7 +381,7 @@ async def init_chat_session():
         await server.initialize()
         
         # Create OpenAI client
-        openai_client = OpenAIClient(api_key)
+        openai_client = OpenAIClient(api_key, model_name)
         
         # Create chat session
         chat_session = ChatSession(server, openai_client)
@@ -390,24 +403,28 @@ async def init_chat_session():
 async def main():
     st.title("MCP SQLite Chat")
     
-    # System prompt at the top (collapsible)
-    with st.expander("System Prompt (Customize AI Behavior)", expanded=False):
-        if "system_prompt" not in st.session_state:
-            st.session_state.system_prompt = "You are a helpful assistant with access to a SQLite database. Help the user query and analyze the database content."
-        
-        system_prompt = st.text_area(
-            "Edit the system prompt below:", 
-            value=st.session_state.system_prompt,
-            height=100
-        )
-        
-        # Update session state if prompt changed
-        if system_prompt != st.session_state.system_prompt:
-            st.session_state.system_prompt = system_prompt
-    
-    # Sidebar for other configuration
+    # Sidebar for configuration
     with st.sidebar:
         st.title("Configuration")
+        
+        # API Key input
+        if "openrouter_api_key" not in st.session_state:
+            st.session_state.openrouter_api_key = ""
+        
+        openrouter_api_key = st.text_input(
+            "Enter your OPENROUTER_API_KEY:", 
+            type="password",
+            value=st.session_state.openrouter_api_key
+        )
+        
+        # Update the session state if the key changed
+        if openrouter_api_key != st.session_state.openrouter_api_key:
+            st.session_state.openrouter_api_key = openrouter_api_key
+        
+        st.caption("If left empty, the app will use the API key from the .env file.")
+        
+        # Model selection
+        model_name = st.selectbox("Select a model:", SPECIFIED_MODELS, index=0)
         
         # Debug mode toggle
         if "debug_mode" not in st.session_state:
@@ -423,6 +440,21 @@ async def main():
             st.session_state.messages = []
             st.rerun()
     
+    # System prompt at the top (collapsible)
+    with st.expander("System Prompt (Customize AI Behavior)", expanded=False):
+        if "system_prompt" not in st.session_state:
+            st.session_state.system_prompt = "You are a helpful assistant with access to a SQLite database. Help the user query and analyze the database content."
+        
+        system_prompt = st.text_area(
+            "Edit the system prompt below:", 
+            value=st.session_state.system_prompt,
+            height=100
+        )
+        
+        # Update session state if prompt changed
+        if system_prompt != st.session_state.system_prompt:
+            st.session_state.system_prompt = system_prompt
+    
     # Display introduction
     if not st.session_state.messages:
         st.markdown("""
@@ -435,7 +467,7 @@ async def main():
         """)
     
     # Initialize server and chat session
-    server, chat_session = await init_chat_session()
+    server, chat_session = await init_chat_session(model_name)
     
     # Display chat messages from history
     for message in st.session_state.messages:
