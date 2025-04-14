@@ -126,9 +126,8 @@ class Server:
             raise RuntimeError(f"Server {self.name} not initialized")
             
         try:
-            with st.spinner(f"Executing tool: {tool_name}..."):
-                result = await self.session.call_tool(tool_name, arguments)
-                return result
+            result = await self.session.call_tool(tool_name, arguments)
+            return result
         except Exception as e:
             st.error(f"Error executing tool: {e}")
             raise
@@ -205,11 +204,14 @@ class ChatSession:
             args = json.loads(args_str)
             # Create a descriptive message about the tool being used
             tool_call_desc = f"🛠️ *Using tool: {tool_name}* with parameters: {json.dumps(args, indent=2)}"
-            with st.chat_message("assistant"):
-                st.write(tool_call_desc)
             
-            # Add tool call message to chat history
-            st.session_state.messages.append({"role": "assistant", "content": tool_call_desc})
+            # Only show the tool call message if debug mode is enabled
+            if st.session_state.get("debug_mode", False):
+                with st.chat_message("assistant"):
+                    st.write(tool_call_desc)
+                
+                # Add tool call message to chat history only in debug mode
+                st.session_state.messages.append({"role": "assistant", "content": tool_call_desc})
             
             result = await self.server.execute_tool(tool_name, args)
             result_str = str(result)
@@ -321,20 +323,19 @@ class ChatSession:
             
             # Process any tool calls
             if tool_calls:
-                with st.spinner("Processing tool calls..."):
-                    updated_messages, tool_result = await self.process_tool_calls(tool_calls, api_messages.copy())
-                    
-                    if tool_result:
-                        # Get a new response with the tool result
-                        with st.spinner("Getting final response..."):
-                            response = await self.openai_client.get_response(updated_messages)
+                updated_messages, tool_result = await self.process_tool_calls(tool_calls, api_messages.copy())
+                
+                if tool_result:
+                    # Get a new response with the tool result
+                    with st.spinner("Working with the database..."):
+                        response = await self.openai_client.get_response(updated_messages)
+                        
+                        if "error" in response:
+                            error_msg = f"Error: {response['error']}"
+                            st.error(error_msg)
+                            return error_msg
                             
-                            if "error" in response:
-                                error_msg = f"Error: {response['error']}"
-                                st.error(error_msg)
-                                return error_msg
-                                
-                            content = response["choices"][0]["message"].get("content", "")
+                        content = response["choices"][0]["message"].get("content", "")
             
             # Display and return the final response
             return content
@@ -389,16 +390,24 @@ async def init_chat_session():
 async def main():
     st.title("MCP SQLite Chat")
     
-    # Sidebar for configuration
-    with st.sidebar:
-        st.title("Configuration")
+    # System prompt at the top (collapsible)
+    with st.expander("System Prompt (Customize AI Behavior)", expanded=False):
+        if "system_prompt" not in st.session_state:
+            st.session_state.system_prompt = "You are a helpful assistant with access to a SQLite database. Help the user query and analyze the database content."
         
-        # Custom system prompt input (optional)
         system_prompt = st.text_area(
-            "System Prompt (optional):", 
-            value="You are a helpful assistant with access to a SQLite database. Help the user query and analyze the database content.",
+            "Edit the system prompt below:", 
+            value=st.session_state.system_prompt,
             height=100
         )
+        
+        # Update session state if prompt changed
+        if system_prompt != st.session_state.system_prompt:
+            st.session_state.system_prompt = system_prompt
+    
+    # Sidebar for other configuration
+    with st.sidebar:
+        st.title("Configuration")
         
         # Debug mode toggle
         if "debug_mode" not in st.session_state:
@@ -421,17 +430,6 @@ async def main():
         
         This app allows you to have a conversation with an AI about your SQLite database.
         You can ask questions about the database schema, query data, and more.
-        
-        ### Example Queries:
-        - "What tables are in this database?"
-        - "Show me the schema of the Customers table"
-        - "How many albums are there in total?"
-        - "Show me the artists with the most albums"
-        - "List all employees hired before 2010"
-        
-        ### Tool Usage:
-        When the AI needs to access the database, you'll see a message showing which tool is being used.
-        The actual database results are processed behind the scenes to keep the interface clean.
         
         *Start chatting below!*
         """)
@@ -457,7 +455,7 @@ async def main():
             st.session_state.messages.append({"role": "user", "content": user_input})
             
             # Get AI response
-            ai_response = await chat_session.process_message(user_input, system_prompt)
+            ai_response = await chat_session.process_message(user_input, st.session_state.system_prompt)
             
             # Display AI response
             with st.chat_message("assistant"):
