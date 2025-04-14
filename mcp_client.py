@@ -3,12 +3,10 @@ import json
 import os
 from typing import Any, Dict, List
 from contextlib import AsyncExitStack
-
 from dotenv import load_dotenv
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-import httpx
-
+from openai import OpenAI, AsyncOpenAI  # Import the OpenAI client
 
 class Configuration:
     """Manages configuration and environment variables."""
@@ -29,7 +27,6 @@ class Configuration:
         if not self.api_key:
             raise ValueError("OPENROUTER_API_KEY not found in environment variables")
         return self.api_key
-
 
 class Tool:
     """Represents a tool with its properties."""
@@ -55,7 +52,6 @@ Description: {self.description}
 Arguments:
 {chr(10).join(args_desc)}
 """
-
 
 class Server:
     """Manages MCP server connection and tool execution."""
@@ -131,46 +127,58 @@ class Server:
         except Exception as e:
             print(f"Error during cleanup of server {self.name}: {e}")
 
-
 class OpenAIClient:
-    """Handles communication with OpenAI-compatible API."""
+    """Handles communication with OpenAI-compatible API using the OpenAI SDK."""
     
     def __init__(self, api_key: str) -> None:
-        self.api_key = api_key
+        self.client = AsyncOpenAI(
+            api_key=api_key,
+            base_url="https://openrouter.ai/api/v1",
+        )
         
     async def get_response(self, messages: List[Dict[str, str]], tools=None) -> dict:
-        """Get a response from the LLM."""
-        url = "https://openrouter.ai/api/v1/chat/completions"
-        
-        headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_key}",
-        }
-        
-        payload = {
-            "messages": messages,
-            "model": "openai/gpt-4o-mini",
-            "temperature": 0.7,
-            "max_tokens": 4096,
-            "top_p": 1,
-        }
-        
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
-        
+        """Get a response from the LLM using the OpenAI SDK."""
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.post(url, headers=headers, json=payload, timeout=30.0)
-                response.raise_for_status()
-                return response.json()
-        except httpx.RequestError as e:
+            # Create the parameters for the API call
+            params = {
+                #"model": "openai/gpt-4o-mini",
+                "model": "google/gemini-2.0-flash-lite-001",
+                "messages": messages,
+                "temperature": 0.7,
+                "max_tokens": 4096,
+                "top_p": 1,
+            }
+            
+            # Add tools if provided
+            if tools:
+                params["tools"] = tools
+                params["tool_choice"] = "auto"
+            
+            # Make the API call
+            response = await self.client.chat.completions.create(**params)
+            
+            # Convert response to a dictionary to maintain compatibility with your existing code
+            return {
+                "choices": [
+                    {
+                        "index": 0,
+                        "message": {
+                            "role": response.choices[0].message.role,
+                            "content": response.choices[0].message.content,
+                            "tool_calls": response.choices[0].message.tool_calls if hasattr(response.choices[0].message, 'tool_calls') else None
+                        },
+                        "finish_reason": response.choices[0].finish_reason
+                    }
+                ],
+                "usage": {
+                    "prompt_tokens": response.usage.prompt_tokens,
+                    "completion_tokens": response.usage.completion_tokens,
+                    "total_tokens": response.usage.total_tokens
+                }
+            }
+        except Exception as e:
             print(f"Error getting LLM response: {e}")
-            if isinstance(e, httpx.HTTPStatusError):
-                print(f"Status code: {e.response.status_code}")
-                print(f"Response details: {e.response.text}")
             return {"error": str(e)}
-
 
 class ChatSession:
     """Manages the interaction between user, LLM, and tools."""
@@ -186,9 +194,17 @@ class ChatSession:
             
         # Only process the first tool call
         tool_call = tool_calls[0]
-        function_call = tool_call.get("function", {})
-        tool_name = function_call.get("name")
-        args_str = function_call.get("arguments", "{}")
+        
+        # OpenAI SDK returns objects, not dictionaries, so we need to adapt
+        if hasattr(tool_call, 'function'):
+            tool_name = tool_call.function.name
+            args_str = tool_call.function.arguments
+            tool_call_id = tool_call.id
+        else:  # Handle dictionary format for backward compatibility
+            function_call = tool_call.get("function", {})
+            tool_name = function_call.get("name")
+            args_str = function_call.get("arguments", "{}")
+            tool_call_id = tool_call.get("id", "call_1")
         
         try:
             args = json.loads(args_str)
@@ -203,7 +219,7 @@ class ChatSession:
                 "content": None,
                 "tool_calls": [
                     {
-                        "id": tool_call.get("id", "call_1"),
+                        "id": tool_call_id,
                         "type": "function", 
                         "function": {
                             "name": tool_name,
@@ -216,7 +232,7 @@ class ChatSession:
             # Add the tool response
             messages.append({
                 "role": "tool",
-                "tool_call_id": tool_call.get("id", "call_1"),
+                "tool_call_id": tool_call_id,
                 "content": result_str
             })
             
@@ -330,7 +346,6 @@ class ChatSession:
             # Clean up
             await self.server.cleanup()
 
-
 async def main() -> None:
     """Initialize and run the chat session."""
     print("Starting MCP SQLite client...")
@@ -356,7 +371,6 @@ async def main() -> None:
         print("Error: SQLite server configuration not found in config file.")
     except Exception as e:
         print(f"Error: {e}")
-
 
 if __name__ == "__main__":
     asyncio.run(main())
